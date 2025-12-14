@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>サンレンタン</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <style>
+        body {
+            background-image: url("{{ url_for('static', filename='bg_mosaic.jpg') }}");
+            background-size: cover; background-position: center; background-attachment: fixed;
+            background-color: rgba(255, 255, 255, 0.85); background-blend-mode: overlay;
+            min-height: 100vh;
+            padding-bottom: 50px;
+        }
+        .sortable-item {
+            background: #fff; border: 1px solid #ddd; padding: 15px; margin-bottom: 5px;
+            border-radius: 5px; cursor: move; display: flex; align-items: center; font-weight: bold;
+        }
+        .rank-badge {
+            background: #333; color: #fff; width: 30px; height: 30px;
+            border-radius: 50%; text-align: center; line-height: 30px; margin-right: 15px;
+        }
+        .top3 .sortable-item:nth-child(1) .rank-badge { background: #d4af37; }
+        .top3 .sortable-item:nth-child(2) .rank-badge { background: #c0c0c0; }
+        .top3 .sortable-item:nth-child(3) .rank-badge { background: #cd7f32; }
+    </style>
+</head>
+<body>
+
+<div class="container mt-4" style="max-width: 600px;">
+    
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <span class="badge bg-secondary">Room: {{ state.room_id }}</span>
+        {% if state.phase != 'rules' %}
+        <span class="badge bg-warning text-dark fs-6">親: {{ state.current_parent_name }}</span>
+        {% endif %}
+    </div>
+
+    {% if state.phase == 'rules' %}
+        <div class="card p-4 shadow border-info">
+            <h2 class="text-center mb-3">📖 ルール説明</h2>
+            <div class="alert alert-light border">
+                <h5>3. 得点（配当）について</h5>
+                <ul class="mb-0 small" style="list-style-type: none; padding-left: 0;">
+                    <li class="mb-1"><span class="badge bg-danger">6点</span> <strong>サンレンタン</strong><br>1〜3位の「中身」と「順位」が全て正解</li>
+                    <li class="mb-1"><span class="badge bg-primary">4点</span> <strong>サンレンプク</strong><br>1〜3位の「中身」は合っているが順位が違う</li>
+                    <li class="mb-1"><span class="badge bg-success">3点</span> <strong>ニレンタン</strong><br>1位と2位の「中身」と「順位」が正解</li>
+                    <li class="mb-1"><span class="badge bg-info text-dark">2点</span> <strong>プクプク</strong><br>3位以内の中身が2つ合っている</li>
+                    <li class="mb-1"><span class="badge bg-secondary">1点</span> <strong>タン</strong><br>1位の「中身」と「順位」だけ正解</li>
+                </ul>
+            </div>
+            <div class="text-center mt-3">
+                {% if has_read_rules %}
+                    <div class="alert alert-success">
+                        <div class="spinner-border spinner-border-sm text-success" role="status"></div>
+                        <strong>準備完了！</strong> ({{ state.read_rules_players|length }} / {{ state.players|length }})
+                    </div>
+                {% else %}
+                    <a href="/finish_reading/{{ state.room_id }}" class="btn btn-primary w-100 btn-lg">理解しました！</a>
+                {% endif %}
+            </div>
+        </div>
+
+    {% elif state.phase == 'parent_wait' %}
+        <div class="alert alert-info text-center"><strong>お題：{{ state.theme }}</strong></div>
+        {% if is_parent %}
+            <div class="card p-3 border-danger shadow">
+                <h4 class="text-danger">あなたの出番です！</h4>
+                <p>自分の順位を決めてください。</p>
+                <form action="/action/{{ state.room_id }}" method="POST" id="gameForm">
+                    <input type="hidden" name="type" value="parent">
+                    <input type="hidden" name="sorted_order" id="sorted_order">
+                    <ul id="sortable-list" class="sortable-list top3 list-unstyled">
+                        {% for item in state.choices %}
+                        <li class="sortable-item" data-id="{{ item }}"><span class="rank-badge">?</span> {{ item }}</li>
+                        {% endfor %}
+                    </ul>
+                    <button type="button" onclick="submitOrder()" class="btn btn-danger w-100 mt-3">決定する</button>
+                </form>
+            </div>
+        {% else %}
+            <div class="text-center py-5 card shadow">
+                <div class="spinner-border text-danger mx-auto" role="status"></div>
+                <h4 class="mt-3">{{ state.current_parent_name }}さんが考え中です...</h4>
+                <p>「{{ state.theme }}」について話して待ちましょう！</p>
+            </div>
+        {% endif %}
+
+    {% elif state.phase == 'child_wait' %}
+        <div class="alert alert-info text-center"><strong>お題：{{ state.theme }}</strong></div>
+        
+        {% if is_parent %}
+            <div class="text-center py-5 card shadow">
+                <div class="spinner-border text-success mx-auto" role="status"></div>
+                <h4 class="mt-3">みんなが予想中です...</h4>
+                <p>回答状況: <strong>{{ state.submitted_uids|length }} / {{ state.players|length - 1 }}</strong> 人</p>
+            </div>
+        {% elif not has_submitted %}
+            <div class="card p-3 border-success shadow">
+                <h4 class="text-success">予想タイム！</h4>
+                <p>{{ state.current_parent_name }}さんのランキングを当ててください。</p>
+                <form action="/action/{{ state.room_id }}" method="POST" id="gameForm">
+                    <input type="hidden" name="type" value="child">
+                    <input type="hidden" name="sorted_order" id="sorted_order">
+                    <ul id="sortable-list" class="sortable-list top3 list-unstyled">
+                        {% for item in state.choices %}
+                        <li class="sortable-item" data-id="{{ item }}"><span class="rank-badge">?</span> {{ item }}</li>
+                        {% endfor %}
+                    </ul>
+                    <button type="button" onclick="submitOrder()" class="btn btn-success w-100 mt-3">決定！</button>
+                </form>
+            </div>
+        {% else %}
+            <div class="card p-5 text-center shadow border-success">
+                <h3 class="text-success">回答を受け付けました！</h3>
+                <p class="mb-4">他のプレイヤーが回答するのを待っています...</p>
+                <div class="spinner-border text-success mx-auto" role="status"></div>
+                <p class="mt-3 text-muted">現在: {{ state.submitted_uids|length }} / {{ state.players|length - 1 }} 人</p>
+            </div>
+        {% endif %}
+
+    {% elif state.phase == 'result' %}
+        <div class="alert alert-info text-center"><strong>お題：{{ state.theme }}</strong></div>
+        <div class="card p-4 text-center border-primary shadow">
+            
+            {% if is_parent %}
+                <h2 class="text-primary fw-bold">結果: {{ state.score }}点</h2>
+                <p class="text-muted">親には得点は入りません</p>
+            {% else %}
+                {% for p in state.players %}
+                    {% if p.uid == my_uid %}
+                        <h2 class="text-primary fw-bold">{{ p.last_points }}点獲得！</h2>
+                        <h4 class="text-success">{{ p.last_result }}</h4>
+                    {% endif %}
+                {% endfor %}
+            {% endif %}
+
+            <hr>
+            
+            <div class="row">
+                <div class="col-6">
+                    <h6 class="text-danger small fw-bold">親の正解</h6>
+                    <ol class="list-group list-group-numbered list-group-flush small">
+                        {% for item in state.parent_rank[:3] %}
+                        <li class="list-group-item list-group-item-danger py-2">{{ item }}</li>
+                        {% endfor %}
+                    </ol>
+                </div>
+
+                {% if not is_parent %}
+                <div class="col-6">
+                    <h6 class="text-success small fw-bold">あなたの予想</h6>
+                    <ol class="list-group list-group-numbered list-group-flush small">
+                        {% for p in state.players %}
+                            {% if p.uid == my_uid %}
+                                {% for item in p.guess[:3] %}
+                                    <li class="list-group-item list-group-item-success py-2">{{ item }}</li>
+                                {% endfor %}
+                            {% endif %}
+                        {% endfor %}
+                    </ol>
+                </div>
+                {% else %}
+                <div class="col-6 d-flex align-items-center justify-content-center">
+                    <span class="text-muted small">予想はありません</span>
+                </div>
+                {% endif %}
+            </div>
+            <div class="mt-4 pt-3 border-top">
+                <h5>みんなの結果一覧</h5>
+                <ul class="list-group text-start">
+                    {% for p in state.players %}
+                        {% if p.uid != state.current_parent_uid %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>{{ p.name }}</span>
+                            <span class="text-end" style="line-height: 1.2;">
+                                <strong>{{ p.last_result }}</strong><br>
+                                <small class="text-success fw-bold">+{{ p.last_points }}点</small>
+                            </span>
+                        </li>
+                        {% endif %}
+                    {% endfor %}
+                </ul>
+            </div>
+
+            <a href="/next_round/{{ state.room_id }}" class="btn btn-warning w-100 mt-4">次の親へ交代！</a>
+        </div>
+
+    {% else %}
+        <div class="card p-5 shadow text-center border-warning">
+            <h3 class="text-warning">準備中</h3>
+            <a href="/" class="btn btn-secondary mt-3">ロビーに戻る</a>
+        </div>
+    {% endif %}
+
+    {% if state.phase != 'lobby' %}
+    <div class="mt-5">
+        <div class="card mb-4 shadow-sm">
+            <div class="card-header bg-dark text-white">🏆 現在のランキング</div>
+            <ul class="list-group list-group-flush">
+                {% for player in state.players|sort(attribute='score', reverse=True) %}
+                <li class="list-group-item d-flex justify-content-between align-items-center">
+                    <span>
+                        {% if loop.index == 1 %}👑{% endif %} {{ player.name }}
+                        {% if player.uid == state.current_parent_uid %} <span class="badge bg-warning text-dark ms-1">親</span> {% endif %}
+                    </span>
+                    <span class="badge bg-primary rounded-pill">{{ player.score }} pts</span>
+                </li>
+                {% endfor %}
+            </ul>
+        </div>
+        
+        {% if state.history %}
+        <div class="card shadow-sm">
+            <div class="card-header bg-secondary text-white">📜 履歴</div>
+            <div class="card-body p-0">
+                <table class="table table-striped mb-0 text-small" style="font-size: 0.8rem;">
+                    {% for log in state.history|reverse %}
+                    <tr>
+                        <td>
+                            <strong>{{ log.parent }}</strong><br>
+                            <span class="text-muted">{{ log.theme }}</span>
+                        </td>
+                        <td class="text-end">{{ log.details }}</td>
+                    </tr>
+                    {% endfor %}
+                </table>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    const roomId = "{{ state.room_id }}";
+    const currentPhase = "{{ state.phase }}";
+    const currentTheme = "{{ state.theme }}";
+    const readCount = "{{ state.read_rules_players|length }}";
+    const submittedCount = "{{ state.submitted_uids|length }}";
+
+    setInterval(() => {
+        fetch(`/api/status/${roomId}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.phase !== currentPhase || 
+                    data.theme !== currentTheme ||
+                    (currentPhase === 'rules' && data.read_rules_players.length != readCount) ||
+                    (currentPhase === 'child_wait' && data.submitted_uids.length != submittedCount)) {
+                    location.reload();
+                }
+            })
+            .catch(err => console.error(err));
+    }, 1000);
+
+    var el = document.getElementById('sortable-list');
+    if(el){
+        Sortable.create(el, { animation: 150, onEnd: updateBadges });
+        updateBadges();
+    }
+    function updateBadges() {
+        if(!el) return;
+        el.querySelectorAll('.sortable-item').forEach((item, index) => {
+            item.querySelector('.rank-badge').innerText = index + 1;
+        });
+    }
+    function submitOrder() {
+        var items = document.querySelectorAll('.sortable-item');
+        var result = [];
+        items.forEach(item => result.push(item.getAttribute('data-id')));
+        document.getElementById('sorted_order').value = result.join(",");
+        document.getElementById('gameForm').submit();
+    }
+</script>
+
+</body>
+</html>

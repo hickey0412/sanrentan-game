@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>サンレンタン Web</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.0/Sortable.min.js"></script>
+    <style>
+        body {
+            background-image: url("{{ url_for('static', filename='bg_mosaic.jpg') }}");
+            background-size: cover;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+            background-color: rgba(255, 255, 255, 0.85);
+            background-blend-mode: overlay;
+            min-height: 100vh;
+        }
+        .sortable-list { list-style: none; padding: 0; }
+        .sortable-item {
+            background: #fff; border: 1px solid #ddd; padding: 15px; margin-bottom: 5px;
+            border-radius: 5px; cursor: move; display: flex; align-items: center;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1); font-weight: bold;
+        }
+        .rank-badge {
+            background: #333; color: #fff; width: 30px; height: 30px;
+            border-radius: 50%; text-align: center; line-height: 30px; margin-right: 15px;
+        }
+        .top3 .sortable-item:nth-child(1) .rank-badge { background: #d4af37; }
+        .top3 .sortable-item:nth-child(2) .rank-badge { background: #c0c0c0; }
+        .top3 .sortable-item:nth-child(3) .rank-badge { background: #cd7f32; }
+    </style>
+</head>
+<body>
+
+<div class="container mt-5" style="max-width: 600px;">
+    <h1 class="text-center mb-4">🐴 サンレンタン Web</h1>
+
+    {% if state.phase == 'start' %}
+    <div class="card p-4 shadow-sm">
+        <h3>お題を決めてスタート</h3>
+        <form action="/start" method="POST">
+            <div class="mb-3">
+                <label class="form-label">今回のお題</label>
+                <input type="text" name="theme" class="form-control" value="{{ state.theme }}" readonly>
+            </div>
+            <button type="submit" class="btn btn-primary w-100 mb-2">このお題でゲーム開始</button>
+        </form>
+        <a href="/reset" class="btn btn-outline-secondary w-100">別のお題にする</a>
+    </div>
+    {% endif %}
+
+    {% if state.phase == 'parent' %}
+    <div class="card p-4 border-danger shadow-sm">
+        <h4 class="text-danger">【親の出番】</h4>
+        <p>「{{ state.theme }}」について、あなたの順位を決めてください。<br>
+           <small>※ドラッグして上から1位・2位・3位になるように並べ替えてください。</small>
+        </p>
+        <form id="gameFormParent" action="/submit_parent" method="POST">
+            <input type="hidden" name="sorted_order" id="sorted_order_parent">
+            <ul id="sortable-list-parent" class="sortable-list top3">
+                {% for item in state.choices %}
+                <li class="sortable-item" data-id="{{ item }}">
+                    <span class="rank-badge">?</span> {{ item }}
+                </li>
+                {% endfor %}
+            </ul>
+            <button type="button" onclick="submitOrder('parent')" class="btn btn-danger w-100 mt-3">決定して隠す</button>
+        </form>
+    </div>
+    {% endif %}
+
+    {% if state.phase == 'child' %}
+    <div class="card p-4 border-success shadow-sm">
+        <h4 class="text-success">【子の出番】</h4>
+        <p>「{{ state.theme }}」について、親のランキングを予想してください！<br>
+           <small>※ドラッグして上から1位・2位・3位になるように並べ替えてください。</small>
+        </p>
+        <form id="gameFormChild" action="/submit_child" method="POST">
+            <input type="hidden" name="sorted_order" id="sorted_order_child">
+            <ul id="sortable-list-child" class="sortable-list top3">
+                {% for item in state.choices %}
+                <li class="sortable-item" data-id="{{ item }}">
+                    <span class="rank-badge">?</span> {{ item }}
+                </li>
+                {% endfor %}
+            </ul>
+            <button type="button" onclick="submitOrder('child')" class="btn btn-success w-100 mt-3">予想して結果を見る</button>
+        </form>
+    </div>
+    {% endif %}
+
+    {% if state.phase == 'result' %}
+    <div class="card p-4 mt-3 shadow-lg">
+        <h2 class="text-center text-primary fw-bold">{{ state.score }}点</h2>
+        <h4 class="text-center">{{ state.result_type }}</h4>
+        <hr>
+        <div class="row">
+            <div class="col-6">
+                <h5>親の正解</h5>
+                <ol class="list-group list-group-numbered">
+                    {% for item in state.parent_rank[:3] %}
+                    <li class="list-group-item list-group-item-danger">{{ item }}</li>
+                    {% endfor %}
+                </ol>
+            </div>
+            <div class="col-6">
+                <h5>子の予想</h5>
+                <ol class="list-group list-group-numbered">
+                    {% for item in state.child_rank[:3] %}
+                    <li class="list-group-item list-group-item-success">{{ item }}</li>
+                    {% endfor %}
+                </ol>
+            </div>
+        </div>
+        <div class="mt-4 text-center">
+            <a href="/reset" class="btn btn-primary w-100">次のゲームへ（お題を変える）</a>
+        </div>
+    </div>
+    {% endif %}
+
+</div>
+
+<script>
+    function initSortable(id) {
+        var el = document.getElementById(id);
+        if(el){
+            Sortable.create(el, { animation: 150, onEnd: function() { updateBadges(el); } });
+            updateBadges(el);
+        }
+    }
+    function updateBadges(container) {
+        if(!container) return;
+        var items = container.querySelectorAll('.sortable-item');
+        items.forEach((item, index) => {
+            var badge = item.querySelector('.rank-badge');
+            badge.innerText = index + 1;
+        });
+    }
+    initSortable('sortable-list-parent');
+    initSortable('sortable-list-child');
+
+    function submitOrder(type) {
+        var listId = 'sortable-list-' + type;
+        var inputId = 'sorted_order_' + type;
+        var formId = 'gameForm' + (type === 'parent' ? 'Parent' : 'Child');
+        var items = document.querySelectorAll('#' + listId + ' .sortable-item');
+        var result = [];
+        items.forEach(function(item) { result.push(item.getAttribute('data-id')); });
+        document.getElementById(inputId).value = result.join(",");
+        document.getElementById(formId).submit();
+    }
+</script>
+</body>
+</html>
